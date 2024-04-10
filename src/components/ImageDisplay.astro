@@ -1,0 +1,213 @@
+---
+
+---
+
+<div
+  id="display-ctn"
+  class="flex-1 relative bg-slate-100 rounded-md overflow-hidden select-none"
+>
+  <canvas id="display" class="absolute top-0 left-0"></canvas>
+</div>
+
+<script is:inline>
+  let image_url = window.location.pathname.slice(1);
+
+  if (!image_url.startsWith("http")) {
+    image_url = "https://" + image_url;
+  }
+  const image = new Image();
+
+  image.setAttribute("crossOrigin", "");
+  image.src = image_url;
+  image.onload = () => {
+    // scale image to fit canvas and draw in the center
+    let scale = Math.min(
+      canvas.width / image.width,
+      canvas.height / image.height,
+    );
+
+    ctx.scale(scale, scale);
+    let x = (canvas.width - image.width * scale) / 2;
+    let y = (canvas.height - image.height * scale) / 2;
+    ctx.translate(x, y);
+    redraw();
+  };
+
+  const displayCTN = document.getElementById("display-ctn");
+
+  const canvas = document.getElementById("display");
+  canvas.width = displayCTN.offsetWidth;
+  canvas.height = displayCTN.offsetHeight;
+
+  window.addEventListener("resize", () => {
+    canvas.width = displayCTN.offsetWidth;
+    canvas.height = displayCTN.offsetHeight;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    redraw();
+  });
+
+  const ctx = canvas.getContext("2d");
+  trackTransforms(ctx);
+
+  var dragStart, dragged;
+
+  function redraw() {
+    var p1 = ctx.transformedPoint(0, 0);
+    var p2 = ctx.transformedPoint(canvas.width, canvas.height);
+    ctx.clearRect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y);
+    ctx.drawImage(image, 0, 0);
+  }
+
+  canvas.addEventListener(
+    "mousedown",
+    function (evt) {
+      lastX = evt.offsetX || evt.pageX - canvas.offsetLeft;
+      lastY = evt.offsetY || evt.pageY - canvas.offsetTop;
+      dragStart = ctx.transformedPoint(lastX, lastY);
+      dragged = false;
+    },
+    false,
+  );
+  canvas.addEventListener(
+    "mousemove",
+    function (evt) {
+      lastX = evt.offsetX || evt.pageX - canvas.offsetLeft;
+      lastY = evt.offsetY || evt.pageY - canvas.offsetTop;
+      dragged = true;
+      if (dragStart) {
+        var pt = ctx.transformedPoint(lastX, lastY);
+        ctx.translate(pt.x - dragStart.x, pt.y - dragStart.y);
+        redraw();
+      }
+      // get color of position
+      let color = ctx.getImageData(lastX, lastY, 1, 1).data;
+      window.dispatchEvent(
+        new CustomEvent("hover-display", {
+          detail: {
+            color: `rgb(${color[0]}, ${color[1]}, ${color[2]})`,
+          },
+        }),
+      );
+    },
+    false,
+  );
+
+  canvas.addEventListener(
+    "mouseup",
+    function (evt) {
+      dragStart = null;
+    },
+    false,
+  );
+
+  canvas.addEventListener(
+    "dblclick",
+    function (evt) {
+      let color = ctx.getImageData(lastX, lastY, 1, 1).data;
+      window.dispatchEvent(
+        new CustomEvent("select-color", {
+          detail: {
+            color: `rgb(${color[0]}, ${color[1]}, ${color[2]})`,
+          },
+        }),
+      );
+    },
+    false,
+  );
+
+  var scaleFactor = 1.1;
+  var zoom = function (clicks) {
+    // avoid minimize if image is smaller than canvas
+
+    var MinScale = Math.min(
+      canvas.width / image.width,
+      canvas.height / image.height,
+    );
+    if (ctx.getTransform().a < MinScale && clicks < 0) {
+      return;
+    }
+
+    var factor = Math.pow(scaleFactor, clicks);
+    var pt = ctx.transformedPoint(lastX, lastY);
+    ctx.translate(pt.x, pt.y);
+    ctx.scale(factor, factor);
+    ctx.translate(-pt.x, -pt.y);
+    redraw();
+  };
+
+  var handleScroll = function (evt) {
+    var delta = evt.wheelDelta
+      ? evt.wheelDelta / 40
+      : evt.detail
+        ? -evt.detail
+        : 0;
+    if (delta) zoom(delta);
+    return evt.preventDefault() && false;
+  };
+  canvas.addEventListener("DOMMouseScroll", handleScroll, false);
+  canvas.addEventListener("mousewheel", handleScroll, false);
+
+  function trackTransforms(ctx) {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    var xform = svg.createSVGMatrix();
+    ctx.getTransform = function () {
+      return xform;
+    };
+
+    var savedTransforms = [];
+    var save = ctx.save;
+    ctx.save = function () {
+      savedTransforms.push(xform.translate(0, 0));
+      return save.call(ctx);
+    };
+    var restore = ctx.restore;
+    ctx.restore = function () {
+      xform = savedTransforms.pop();
+      return restore.call(ctx);
+    };
+
+    var scale = ctx.scale;
+    ctx.scale = function (sx, sy) {
+      xform = xform.scaleNonUniform(sx, sy);
+      return scale.call(ctx, sx, sy);
+    };
+    var rotate = ctx.rotate;
+    ctx.rotate = function (radians) {
+      xform = xform.rotate((radians * 180) / Math.PI);
+      return rotate.call(ctx, radians);
+    };
+    var translate = ctx.translate;
+    ctx.translate = function (dx, dy) {
+      xform = xform.translate(dx, dy);
+      return translate.call(ctx, dx, dy);
+    };
+    var transform = ctx.transform;
+    ctx.transform = function (a, b, c, d, e, f) {
+      var m2 = svg.createSVGMatrix();
+      m2.a = a;
+      m2.b = b;
+      m2.c = c;
+      m2.d = d;
+      m2.e = e;
+      m2.f = f;
+      xform = xform.multiply(m2);
+      return transform.call(ctx, a, b, c, d, e, f);
+    };
+    var setTransform = ctx.setTransform;
+    ctx.setTransform = function (a, b, c, d, e, f) {
+      xform.a = a;
+      xform.b = b;
+      xform.c = c;
+      xform.d = d;
+      xform.e = e;
+      xform.f = f;
+      return setTransform.call(ctx, a, b, c, d, e, f);
+    };
+    var pt = svg.createSVGPoint();
+    ctx.transformedPoint = function (x, y) {
+      pt.x = x;
+      pt.y = y;
+      return pt.matrixTransform(xform.inverse());
+    };
+  }
+</script>
